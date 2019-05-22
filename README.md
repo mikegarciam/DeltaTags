@@ -1,7 +1,7 @@
 # DeltaTags
 An external QVS script for handling and tracking incremental loads (extract and transforms) in QlikView and Qlik Sense with QVD metadata
 
-Learn more here: https://aftersync.com/blog/delta-tags-a-new-mechanism-for-efficiently-keeping-track-of-incremental-reloads-in-qlikview-and-qlik-sense
+[Learn more here](https://aftersync.com/blog/delta-tags-a-new-mechanism-for-efficiently-keeping-track-of-incremental-reloads-in-qlikview-and-qlik-sense)
 
 # About
 DeltaTags is a technique for keeping track of incremental loads in QlikView and Qlik Sense that solves issues present in other existing approaches, while at the same time being highly efficient.
