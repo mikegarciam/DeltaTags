@@ -1,0 +1,790 @@
+/*******************                 Delta Tags                 ********************
+
+The MIT License (MIT)
+
+Copyright (c) 2018-2019 Miguel Ángel García - All Rights Reserved
+
+This script is part of the Lean Data Processing Framework code bundle.
+
+************************         www.aftersync.com         *************************
+********************         www.leandataprocessing.com         ********************
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+********************			********************			*******************/
+
+
+Set vDeltaTags_StartOfTime = '2012-01-01'; //Format YYYY-MM-DD hh:mm:ss
+Let vDeltaTags_BufferTime = Num(MakeTime(0, 10, 0)); //10 minutes
+Set vDeltaTags_LastCheckTagName = 'LastChecked';
+Set vDeltaTags_LastUpdateTagName = 'LastUpdated';
+Set vDeltaTags_SeparatorSymbol = '_'; //Avoid special characters or spaces.
+Set vDeltaTags_RegisterQVD_DefaultTableName = 'DeltaTagsQVDList';
+Set vDeltaTags_RegisterQVD_DefaultFieldListTableName = 'DeltaTagsOutputFieldList';
+
+Sub GetDeltaTagNames
+	
+	If (not RangeSum(0, NoOFRows('DeltaTagNames')) > 0) THEN 
+	
+		DeltaTagNames:
+			LOAD DISTINCT '$(vDeltaTags_LastCheckTagName)' as TagName AutoGenerate 1;
+			Concatenate(DeltaTagNames) LOAD DISTINCT '$(vDeltaTags_LastUpdateTagName)' as TagName AutoGenerate 1;
+	
+	ENDIF 
+	
+ENDSUB 
+
+Sub StartUpDeltaTags(vDeltaTags_InputQVDs_TableName, vDeltaTags_OutputQVDs_TableName, vDeltaTags_InputQVDsField_QVDName, vDeltaTags_InputQVDsField_FieldName, vDeltaTags_InputQVDsField_RootDirectory, vDeltaTags_InputQVDsField_Recursive, vDeltaTags_OutputQVDsField_QVDName, vDeltaTags_OutputQVDsField_FieldName, vDeltaTags_OutputQVDsField_RootDirectory, vDeltaTags_OutputQVDsField_Recursive) //, vDeltaTags_DoNotSetNewMaxValues)
+
+	If Len('$(vDeltaTags_Config_LastCheckType)') > 0 THEN 
+		
+		IF '$(vDeltaTags_Config_LastCheckType)' = 'RunTime' THEN 
+			
+			Let vDeltaTags_NewTagValue_LastCheck = Timestamp(Now(1), 'YYYYMMDDhhmmss');
+			Trace Starting up delta tags. Current timestamp is '$(vDeltaTags_NewTagValue_LastCheck)';
+		
+		ENDIF 
+		
+		CALL GetDeltaTags('$(vDeltaTags_InputQVDs_TableName)', '$(vDeltaTags_OutputQVDs_TableName)', '$(vDeltaTags_InputQVDsField_QVDName)', '$(vDeltaTags_InputQVDsField_FieldName)', '$(vDeltaTags_InputQVDsField_RootDirectory)', '$(vDeltaTags_InputQVDsField_Recursive)', '$(vDeltaTags_OutputQVDsField_QVDName)', '$(vDeltaTags_OutputQVDsField_FieldName)', '$(vDeltaTags_OutputQVDsField_RootDirectory)', '$(vDeltaTags_OutputQVDsField_Recursive)')
+		
+		IF '$(vDeltaTags_Config_LastCheckType)' = 'Inputs' THEN 
+			
+			If Len('$(vDeltaTags_LastCheckTagValue_Input_Min)') > 0 THEN 
+			
+				Let vDeltaTags_NewTagValue_LastCheck = Timestamp($(vDeltaTags_LastCheckTagValue_Input_Min), 'YYYYMMDDhhmmss');
+				
+			ELSE 
+			
+				Trace Error: Could not set new LastCheck tag value on StartUpDeltaTags(). Sending Error to stop script.;
+				Error - Halt; 
+				EXIT SUB;
+				
+			ENDIF 
+		ENDIF 
+		
+		IF RangeMax(0, $(vDeltaTags_Config_FullLoad)) = 1 THEN 
+
+			Let vDeltaTags_Config_StartingPoint = Timestamp('$(vDeltaTags_StartOfTime)', 'YYYY-MM-DD hh:mm:ss');
+		
+		ELSEIF Len('$(vDeltaTags_LastCheckTagValue_Output_Min)') > 0 THEN 
+		
+			Let vDeltaTags_Config_StartingPoint = Timestamp(RangeMax($(vDeltaTags_LastCheckTagValue_Output_Min) - $(vDeltaTags_BufferTime), Timestamp('$(vDeltaTags_StartOfTime)', 'YYYY-MM-DD hh:mm:ss')), 'YYYY-MM-DD hh:mm:ss');
+			//Update full load config if starting over.
+			Let vDeltaTags_Config_FullLoad = If(Timestamp('$(vDeltaTags_Config_StartingPoint)', 'YYYY-MM-DD hh:mm:ss') = Timestamp('$(vDeltaTags_StartOfTime)', 'YYYY-MM-DD hh:mm:ss'), 1, $(vDeltaTags_Config_FullLoad));
+		ELSE 
+			
+			Trace Error: Could not set new Starting Point value on StartUpDeltaTags(). Sending Error to stop script.;
+			Error - Halt; 
+			EXIT SUB;
+
+		ENDIF 
+		
+	ENDIF 
+	
+ENDSUB 
+
+Sub GetDeltaTagsFromQVD(vDeltaTags_QVDName)
+
+	If FileSize('$(vDeltaTags_QVDName)') > 0 THEN
+		
+		DeltaTagListTemp:
+			LOAD String%Table as Tag,
+				%Key_QvdFieldHeader_59D66ED49CFF179D
+			FROM [$(vDeltaTags_QVDName)] 
+			(XmlSimple, Table is [QvdTableHeader/Fields/QvdFieldHeader/Tags/String]);
+		
+		Inner Join (DeltaTagListTemp)
+			LOAD 
+				FieldName,
+				[%Key_QvdFieldHeader_59D66ED49CFF179D]    // Key for this table: QvdTableHeader/Fields/QvdFieldHeader
+			FROM [$(vDeltaTags_QVDName)] (XmlSimple, Table is [QvdTableHeader/Fields/QvdFieldHeader])
+				WHERE FieldName = '$(vDeltaTags_FieldName)';
+		
+		Let vDeltaTags_RowsFound = NoOfRows('DeltaTagListTemp');
+		Trace $(vDeltaTags_RowsFound) Rows found on $(vDeltaTags_QVDName) for  field $(vDeltaTags_FieldName);
+		Let vDeltaTags_RowsFound = ;
+		
+		For vDeltaTags_Loop_TagsFound = 0 to NoOfRows('DeltaTagListTemp') - 1
+			
+			Let vDeltaTags_Loop_TagName = Peek('Tag', $(vDeltaTags_Loop_TagsFound), 'DeltaTagListTemp');
+			
+			Trace Tag $(vDeltaTags_Loop_TagName) found;
+			
+			Let vDeltaTags_Loop_TagName = ;
+			
+		Next vDeltaTags_Loop_TagsFound
+		
+		Let vDeltaTags_Loop_TagsFound = ;
+		
+		Concatenate(DeltaTagsRaw)
+			LOAD 
+				'$(vDeltaTags_Loop_TagType)' as TagType, 
+				Tag as RawTag
+			Resident DeltaTagListTemp
+			WHERE Exists(TagName, SubField(Tag, '$(vDeltaTags_SeparatorSymbol)', 1));
+		
+		DeltaTagListGrouped:
+			NoConcatenate Load FieldName,
+				SubField(Tag, '$(vDeltaTags_SeparatorSymbol)', 1) as TagName,
+				Timestamp(Max(Timestamp#(SubField(Tag, '$(vDeltaTags_SeparatorSymbol)', 2), 'YYYYMMDDhhmmss'))) as TagValue //Prevent issues where multiple tags exist.
+			Resident DeltaTagListTemp
+				WHERE Exists(TagName, SubField(Tag, '$(vDeltaTags_SeparatorSymbol)', 1))
+				Group by FieldName, SubField(Tag, '$(vDeltaTags_SeparatorSymbol)', 1);
+		
+		Drop Table DeltaTagListTemp;
+		
+		Join (DeltaTagListGrouped)
+			LOAD '$(vDeltaTags_FieldName)' as FieldName, TagName Resident DeltaTagNames;
+			
+		For vDeltaTags_Loop_TagsFound = 0 to NoOfRows('DeltaTagListGrouped') - 1
+			
+			Let vDeltaTags_Loop_TagName = Peek('TagName', $(vDeltaTags_Loop_TagsFound), 'DeltaTagListGrouped');
+			Let vDeltaTags_Loop_TagValue = Peek('TagValue', $(vDeltaTags_Loop_TagsFound), 'DeltaTagListGrouped');
+			//Let vDeltaTags_Loop_TagValue = If(Len('$(vDeltaTags_Loop_TagValue)')>0, '$(vDeltaTags_Loop_TagValue)', '$(vDeltaTags_StartOfTime)');
+			
+			If Len('$(vDeltaTags_Loop_TagValue)')>0 THEN 
+			
+				Trace Tag $(vDeltaTags_Loop_TagName) found with max value $(vDeltaTags_Loop_TagValue);
+			
+			ENDIF 
+			
+			Let vDeltaTags_Loop_TagName = ;
+			Let vDeltaTags_Loop_TagValue = ;
+			
+		Next vDeltaTags_Loop_TagsFound
+		
+		Let vDeltaTags_Loop_TagsFound = ;
+		
+		//If NoOfRows('DeltaTagListGrouped') > 0 THEN 
+			
+			Concatenate([DeltaTagList_PreMerge])
+				LOAD DISTINCT
+					'$(vDeltaTags_Loop_TagType)' as TagType,
+					'$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)' as SourceTable,
+					'$(vDeltaTags_QVDName)' as QVD,
+					FieldName as Field,
+					TagName,
+					If(TagValue > 0, TagValue, '$(vDeltaTags_StartOfTime)') as TagValue  // ,
+					// TagName&'$(vDeltaTags_SeparatorSymbol)'&Timestamp(TagValue, 'YYYYMMDDhhmmss') as RawTag
+				Resident DeltaTagListGrouped;
+		
+		Drop Table DeltaTagListGrouped;
+		
+	ELSE 
+		
+		CALL DeltaTagListDefaultValues('$(vDeltaTags_QVDName)');
+
+	ENDIF
+
+ENDSUB
+
+SUB DeltaTagListDefaultValues(vDeltaTags_QVDName)
+
+	Trace QVD $(vDeltaTags_QVDName) not found. Creating default values.;
+		
+	DeltaTagListDefault:
+		LOAD DISTINCT
+			'$(vDeltaTags_Loop_TagType)' as TagType,
+			'$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)' as SourceTable,
+			'$(vDeltaTags_QVDName)' as QVD,
+			'$(vDeltaTags_FieldName)' as Field
+		AutoGenerate 1;
+	
+	Join (DeltaTagListDefault)
+		LOAD TagName, '$(vDeltaTags_StartOfTime)' as TagValue  Resident DeltaTagNames;
+		
+	Concatenate([DeltaTagList_PreMerge])
+		LOAD * Resident DeltaTagListDefault;
+	
+	Drop Table DeltaTagListDefault;
+		
+ENDSUB 
+
+Sub DeltaTagsDoDir(vDeltaTags_RecursiveDir, vDeltaTags_QVDMask)
+
+	For each vDeltaTags_Loop_File in FileList('$(vDeltaTags_RecursiveDir)\$(vDeltaTags_QVDMask)')
+			
+		CALL GetDeltaTagsFromQVD('$(vDeltaTags_Loop_File)');
+
+	Next vDeltaTags_Loop_File
+	Let vDeltaTags_Loop_File = ;
+	
+	For each vDeltaTags_Loop_Dir in DirList ('$(vDeltaTags_RecursiveDir)\*')
+
+		CALL DeltaTagsDoDir('$(vDeltaTags_Loop_Dir)', '$(vDeltaTags_QVDMask)'); 
+
+	Next vDeltaTags_Loop_Dir
+
+	Let vDeltaTags_Loop_Dir = ;
+
+ENDSUB 
+
+Sub GetDeltaTags(vDeltaTags_InputQVDs_TableName, vDeltaTags_OutputQVDs_TableName, vDeltaTags_InputQVDsField_QVDName, vDeltaTags_InputQVDsField_FieldName, vDeltaTags_InputQVDsField_RootDirectory, vDeltaTags_InputQVDsField_Recursive, vDeltaTags_OutputQVDsField_QVDName, vDeltaTags_OutputQVDsField_FieldName, vDeltaTags_OutputQVDsField_RootDirectory, vDeltaTags_OutputQVDsField_Recursive) //, vDeltaTags_DoNotSetNewMaxValues)
+	
+	For each vDeltaTags_Loop_TagType in 'Input', 'Output'
+		
+		Trace Checking for tags in $(vDeltaTags_Loop_TagType) QVD List;
+		
+		If Len('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)') = 0 THEN 
+			// If this function was called without specifying a source table for input/output/qvds, 
+			// it will attempt to fallback on the default name, in case DeltaTags_RegisterQVD() was used;
+
+			Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName = '$(vDeltaTags_RegisterQVD_DefaultTableName)_$(vDeltaTags_Loop_TagType)';
+			//Specifying default field names
+			Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_QVDName = FieldName(1, '$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVD_Path)');
+			Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_FieldName = FieldName(2, '$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVD_FieldName)');
+			Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_RootDirectory = '$(vDeltaTags_Loop_TagType)QVD_RootDirectory'; 
+			Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_Recursive = '$(vDeltaTags_Loop_TagType)QVD_Recursive'; 
+			
+		ENDIF
+
+		If Len('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)') > 0 and RangeSum(0, NoOfRows('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)')) > 0 THEN 
+		
+			If (not (Len('$(vDeltaTags_$(vDeltaTags_TagType)QVDsField_QVDName)') > 0 and Len('$(vDeltaTags_$(vDeltaTags_TagType)QVDsField_FieldName)') > 0)) THEN 
+				
+				Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_QVDName = FieldName(1, '$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)');
+				Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_FieldName = FieldName(2, '$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)');
+				
+			ENDIF 
+			
+			If NoOfRows('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)') > 0 THEN
+
+				IF (not Len(TableNumber('DeltaTagList')) > 0) THEN 
+					[DeltaTagList]:
+					NoConcatenate LOAD Null() as TagType, Null() as SourceTable, Null() as QVD, Null() as Field, Null() as TagName, Null() as TagValue AutoGenerate 0; 
+				ENDIF 
+
+				IF (not Len(TableNumber('DeltaTagsRaw')) > 0) THEN 
+					[DeltaTagsRaw]:
+					NoConcatenate LOAD Null() as TagType, Null() as RawTag AutoGenerate 0;
+				ENDIF 
+					
+				CALL GetDeltaTagNames;
+				
+			ENDIF 
+			
+			For vDeltaTags_Loop_QVDs = 0 to NoOfRows('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)') - 1
+				
+				Let vDeltaTags_QVDMask = Peek('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_QVDName)', $(vDeltaTags_Loop_QVDs), '$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)');
+				Let vDeltaTags_FieldName = Peek('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_FieldName)', $(vDeltaTags_Loop_QVDs), '$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)');
+				Let vDeltaTags_RootDirectory = Peek('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_RootDirectory)', $(vDeltaTags_Loop_QVDs), '$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)');
+				Let vDeltaTags_Recursive = RangeMax(0, Peek('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_Recursive)', $(vDeltaTags_Loop_QVDs), '$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)'));
+
+				[DeltaTagList_PreMerge]:
+					NoConcatenate LOAD Null() as TagType, Null() as SourceTable, Null() as QVD, Null() as Field, Null() as TagName, Null() as TagValue AutoGenerate 0;
+
+				If ($(vDeltaTags_Recursive) = 1 and Len('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_RootDirectory)') > 0) THEN 
+					
+					CALL DeltaTagsDoDir('$(vDeltaTags_RootDirectory)', '$(vDeltaTags_QVDMask)');
+
+				ELSE 
+
+					For each vDeltaTags_QVDName in FileList('$(vDeltaTags_QVDMask)') 
+
+						CALL GetDeltaTagsFromQVD('$(vDeltaTags_QVDName)');
+
+					Next vDeltaTags_QVDName
+
+				ENDIF 
+
+				IF NoOfRows('DeltaTagList_PreMerge') = 0 THEN 
+
+					CALL DeltaTagListDefaultValues('$(vDeltaTags_QVDMask)');
+
+				ENDIF
+				//When dealing with split QVDs, where one file mask grabs multiple QVDs, we need to merge them into one row.
+				Concatenate(DeltaTagList)
+					LOAD TagType,
+						 SourceTable,
+						 '$(vDeltaTags_QVDMask)' as QVD,
+						 Field,
+						 TagName,
+						 Max(TagValue) as TagValue
+					Resident DeltaTagList_PreMerge
+						Group BY
+							TagType,
+						 	SourceTable,
+						 	Field,
+						 	TagName;
+				
+				Drop Table DeltaTagList_PreMerge;
+
+				Let vDeltaTags_QVDName = ;
+				Let vDeltaTags_FieldName = ;
+				Let vDeltaTags_QVDMask = ;
+				Let vDeltaTags_RootDirectory = ;
+				Let vDeltaTags_Recursive =;
+				
+			Next vDeltaTags_Loop_QVDs
+			
+			Let vDeltaTags_Loop_QVDs = ;
+			
+			Drop Table DeltaTagNames;
+			
+			Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_QVDName = ;
+			Let vDeltaTags_$(vDeltaTags_Loop_TagType)QVDsField_FieldName = ;
+			
+			DeltaTags_MaxMinValues:
+			LOAD 
+					TagType,
+					TagName,
+					Max(TagValue) as MaxTagValue,
+					Min(TagValue) as MinTagValue
+			Resident  DeltaTagList
+				GROUP BY TagName, TagType;
+			
+			For vDeltaTags_Loop_TagValues = 0 to NoOfRows('DeltaTags_MaxMinValues')  - 1
+				
+				Let vDeltaTags_Loop_TagName = Peek('TagName', $(vDeltaTags_Loop_TagValues), 'DeltaTags_MaxMinValues');
+				
+				If '$(vDeltaTags_LastCheckTagName)' = '$(vDeltaTags_Loop_TagName)' THEN
+					
+					Let vDeltaTags_LastCheckTagValue_$(vDeltaTags_Loop_TagType)_Min = Peek('MinTagValue', $(vDeltaTags_Loop_TagValues), 'DeltaTags_MaxMinValues');
+					Let vDeltaTags_LastCheckTagValue_$(vDeltaTags_Loop_TagType)_Max = Peek('MaxTagValue', $(vDeltaTags_Loop_TagValues), 'DeltaTags_MaxMinValues');
+					
+				ELSEIF '$(vDeltaTags_LastUpdateTagName)' = '$(vDeltaTags_Loop_TagName)' THEN
+				
+					Let vDeltaTags_LastUpdateTagValue_$(vDeltaTags_Loop_TagType)_Min = Peek('MinTagValue', $(vDeltaTags_Loop_TagValues), 'DeltaTags_MaxMinValues');
+					Let vDeltaTags_LastUpdateTagValue_$(vDeltaTags_Loop_TagType)_Max = Peek('MaxTagValue', $(vDeltaTags_Loop_TagValues), 'DeltaTags_MaxMinValues');
+					
+				ENDIF 
+				
+				Let vDeltaTags_Loop_TagName = ;
+				
+			Next vDeltaTags_Loop_TagValues
+			
+			Let vDeltaTags_Loop_TagValues = ;
+			Drop Table DeltaTags_MaxMinValues;
+			
+			
+		ELSE 
+			
+			Trace No $(vDeltaTags_Loop_TagType) QVDs table defined;
+			
+		ENDIF
+		
+		If Len(TableNumber('$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)')) > 0 THEN
+
+			DROP TABLE [$(vDeltaTags_$(vDeltaTags_Loop_TagType)QVDs_TableName)];
+
+		ENDIF 
+
+	Next vDeltaTags_Loop_TagType
+	
+	Let vDeltaTags_Loop_TagType = ;
+	
+ENDSUB
+
+Sub ResetDeltaTags(vDeltaTags_TargetFieldsTable)
+	
+	If Len('$(vDeltaTags_TargetFieldsTable)') > 0 THEN 
+		
+		Let vDeltaTags_TargetFieldsFieldName = FieldName(1, '$(vDeltaTags_TargetFieldsTable)');
+		
+		DeltaTags_UntagList:
+		LOAD Distinct RawTag Resident DeltaTagsRaw; // WHERE TagType = 'Output';
+		
+		For vDeltaTags_Loop_UnTagFields = 0 to NoOfRows('$(vDeltaTags_TargetFieldsTable)') - 1
+		
+			For vDeltaTags_Loop_UnTags = 0 to NoOfRows('DeltaTags_UntagList') - 1
+				
+				Let vDeltaTags_UnTagField = Peek('$(vDeltaTags_TargetFieldsFieldName)', $(vDeltaTags_Loop_UnTagFields), '$(vDeltaTags_TargetFieldsTable)');
+				Let vDeltaTags_UnTag = Peek('RawTag', $(vDeltaTags_Loop_UnTags), 'DeltaTags_UntagList');
+				
+				IF Len ('$(vDeltaTags_UnTag)') > 0 THEN 
+				
+					UNTAG Field $(vDeltaTags_UnTagField) with $(vDeltaTags_UnTag);
+					Trace Untagged $(vDeltaTags_UnTagField) with $(vDeltaTags_UnTag);
+					
+				ENDIF 
+				Let vDeltaTags_UnTagField = ;
+				Let vDeltaTags_UnTag = ;
+				
+			Next vDeltaTags_Loop_UnTags
+			Let vDeltaTags_Loop_UnTags =;
+		
+		Next vDeltaTags_Loop_UnTagFields
+		Let vDeltaTags_Loop_UnTagFields =;
+		
+		Let vDeltaTags_TargetFieldsFieldName = ;
+		
+		Drop Tables DeltaTagList, DeltaTags_UntagList, DeltaTagsRaw;
+		
+	ELSE 
+	
+		Trace No FieldList table defined;
+	
+	ENDIF 
+	
+ENDSUB 
+
+SUB SetDeltaTags(vDeltaTags_TargetFieldsTable)
+	
+	IF Len('$(vDeltaTags_TargetFieldsTable)') = 0 THEN 
+	
+		Let vDeltaTags_TargetFieldsTable = '$(vDeltaTags_RegisterQVD_DefaultFieldListTableName)';
+	
+	ENDIF 
+
+	IF (not (Len('$(vDeltaTags_NewTagValue_LastCheck)') > 0 and RangeMax(0, NoOfRows('$(vDeltaTags_TargetFieldsTable)')) > 0)) THEN 
+	
+		Trace Missing initial argument on SetDeltaTags();
+		
+	ELSE
+		
+		CALL ResetDeltaTags('$(vDeltaTags_TargetFieldsTable)');
+		
+		If Len(TableNumber('DeltaTags_TableSources')) > 0 THEN
+			CALL DeltaTags_GetLastUpdateValues;
+		ENDIF 
+		
+		If Len('$(vDeltaTags_TargetFieldsTable)') > 0 and RangeMax(0, '$(vDeltaTags_NewTagValue_LastUpdate)', '$(vDeltaTags_NewTagValue_LastCheck)') > 0 THEN //Len('$(vDeltaTags_NewTagValue_LastUpdate)') > 0 THEN 
+			
+			Let vDeltaTags_TargetFieldsFieldName = FieldName(1, '$(vDeltaTags_TargetFieldsTable)');
+			
+			CALL GetDeltaTagNames;
+			
+			For vDeltaTags_Loop_Tags = 0 to NoOfRows('DeltaTagNames') - 1
+				
+				Let vDeltaTags_Loop_TagName = Peek('TagName', $(vDeltaTags_Loop_Tags), 'DeltaTagNames');
+				
+				For vDeltaTags_Loop_Fields = 0 to NoOfRows('$(vDeltaTags_TargetFieldsTable)') - 1
+					
+					Let vDeltaTags_Loop_FieldName = Peek('$(vDeltaTags_TargetFieldsFieldName)', $(vDeltaTags_Loop_Fields), '$(vDeltaTags_TargetFieldsTable)');
+					
+					If '$(vDeltaTags_LastCheckTagName)' = '$(vDeltaTags_Loop_TagName)' and RangeMax(0, '$(vDeltaTags_NewTagValue_LastCheck)') > 0 THEN 
+						
+						Tag Field [$(vDeltaTags_Loop_FieldName)] with $(vDeltaTags_Loop_TagName)$(vDeltaTags_SeparatorSymbol)$(vDeltaTags_NewTagValue_LastCheck);
+						Trace Tagged field $(vDeltaTags_Loop_FieldName) with $(vDeltaTags_Loop_TagName)$(vDeltaTags_SeparatorSymbol)$(vDeltaTags_NewTagValue_LastCheck);
+						
+					ELSEIF '$(vDeltaTags_LastUpdateTagName)' = '$(vDeltaTags_Loop_TagName)' and RangeMax(0, '$(vDeltaTags_NewTagValue_LastUpdate)') > 0 THEN
+					
+						Tag Field [$(vDeltaTags_Loop_FieldName)] with $(vDeltaTags_Loop_TagName)$(vDeltaTags_SeparatorSymbol)$(vDeltaTags_NewTagValue_LastUpdate);
+						Trace Tagged field $(vDeltaTags_Loop_FieldName) with $(vDeltaTags_Loop_TagName)$(vDeltaTags_SeparatorSymbol)$(vDeltaTags_NewTagValue_LastUpdate);
+						
+					ENDIF 
+					
+					Let vDeltaTags_Loop_FieldName = ;
+					
+				Next vDeltaTags_Loop_Fields
+				
+				Let vDeltaTags_Loop_Fields = ;
+				Let vDeltaTags_Loop_TagName = ;
+				
+			Next vDeltaTags_Loop_Tags
+			Let vDeltaTags_Loop_Tags =;
+			
+			Let vDeltaTags_TargetFieldsFieldName = ;
+			
+			Drop Table DeltaTagNames;
+		
+		ELSE 
+		
+			Trace No new tag values found;
+			
+		ENDIF 
+		
+		//Drop Default FieldListTable
+		DROP TABLE [$(vDeltaTags_RegisterQVD_DefaultFieldListTableName)];
+
+		//Drop TimeValues To Update table.
+		If Len(TableNumber('DeltaTags_TimeValuesToUpdate')) > 0 THEN 
+			DROP TABLE [DeltaTags_TimeValuesToUpdate];
+		ENDIF 
+
+	ENDIF
+	
+	Let vDeltaTags_TargetFieldsTable = ;
+ENDSUB
+
+SUB DeltaTags_GetMaxMinTS(DeltaTags_SourceTable, DeltaTags_SourceField_Max, DeltaTags_SourceField_Min)
+	
+	If '$(DeltaTags_SourceField_Min)' = '0' THEN
+	
+		DeltaTagsTSValues:
+			NoConcatenate
+			LOAD Max([$(DeltaTags_SourceField_Max)]) as Max
+			Resident [$(DeltaTags_SourceTable)];
+			
+		Let vDeltaTags_MaxTS = Timestamp(RangeMax(Peek('Max', 0, 'DeltaTagsTSValues'), 0), 'YYYY-MM-DD hh:mm:ss');
+		//Trace '$(vDeltaTags_MaxTS)';
+		
+	ELSE 
+	
+		DeltaTagsTSValues:
+			NoConcatenate
+			LOAD Max([$(DeltaTags_SourceField_Max)]) as Max,
+				 Min([$(DeltaTags_SourceField_Min)]) as Min
+			Resident [$(DeltaTags_SourceTable)];
+
+		Let vDeltaTags_MaxTS = Timestamp(RangeMax(Peek('Max', 0, 'DeltaTagsTSValues'), 0), 'YYYY-MM-DD hh:mm:ss');
+		Let vDeltaTags_MinTS = Timestamp(RangeMax(Peek('Min', 0, 'DeltaTagsTSValues'), 0), 'YYYY-MM-DD hh:mm:ss');
+		
+	END IF
+	
+	Drop Table DeltaTagsTSValues;
+	
+END SUB
+
+SUB DeltaTags_RegisterSourceTSByTable(DeltaTags_SourceTable, DeltaTags_MaxUpdatedTSFieldName)
+	
+	If (Len('$(DeltaTags_SourceTable)') and Len ('$(DeltaTags_MaxUpdatedTSFieldName)')) THEN
+		
+		CALL DeltaTags_GetMaxMinTS('$(DeltaTags_SourceTable)', '$(DeltaTags_MaxUpdatedTSFieldName)', '0');
+		CALL DeltaTags_RegisterSourceTSByVar('$(DeltaTags_SourceTable)', '$(vDeltaTags_MaxTS)');
+		
+		Let vDeltaTags_MaxTS = ;
+		Let vDeltaTags_MinTS = ;
+		
+	ELSE 
+	
+		Trace Throwing Error because of missing parameters for DeltaTags_RegisterSourceTS();
+		Error - Halt;
+		EXIT SUB;
+
+	ENDIF
+	
+END SUB
+
+SUB DeltaTags_RegisterSourceTSByVar(DeltaTags_SourceTable, DeltaTags_MaxUpdatedTS)
+	
+	If (Len('$(DeltaTags_SourceTable)') and Len ('$(DeltaTags_MaxUpdatedTS)')) THEN
+		
+		If Len(TableNumber('DeltaTags_TableSources')) = 0 THEN
+			DeltaTags_TableSources:
+			LOAD 
+				 Null() as sourceTable
+			AutoGenerate 0;
+		ENDIF
+	
+		RENAME Table DeltaTags_TableSources to DeltaTags_TableSourcesTEMP;
+		
+		DeltaTags_TableSources:
+			NoConcatenate
+			LOAD * Resident DeltaTags_TableSourcesTEMP
+			WHERE sourceTable <> '$(DeltaTags_SourceTable)';
+		
+		Drop Table DeltaTags_TableSourcesTEMP;
+		
+//		If ('$(vDeltaTags_UpdateMode)' = 'full') THEN
+//			
+//			Concatenate(DeltaTags_TableSources)
+//				Load DISTINCT
+//					 '$(DeltaTags_SourceTable)' as sourceTable,
+//					 '$(DeltaTags_MaxUpdatedTS)' as maxUpdatedTS,
+//					 '$(DeltaTags_MinCreatedTS)' as minCreatedTS
+//				AutoGenerate 1;
+//			
+//		ELSE 
+		
+			Concatenate(DeltaTags_TableSources)
+				Load 
+					 '$(DeltaTags_SourceTable)' as sourceTable,
+					 '$(DeltaTags_MaxUpdatedTS)' as maxUpdatedTS
+				AutoGenerate 1;
+				
+//		ENDIF
+		
+	ELSE 
+	
+		Trace Throwing Error because of missing parameters for DeltaTags_RegisterSourceTS();
+		Error - Halt;
+		EXIT SUB;
+
+	ENDIF
+
+END SUB
+		
+SUB DeltaTags_GetLastUpdateValues
+
+	If Len(TableNumber('DeltaTags_TableSources')) = 0 THEN
+		
+		Trace Throwing Error because no table source data has been defined for DeltaTags_GetLastUpdateValues();
+		
+		Error - Halt;
+		
+	ELSE 
+		
+		DeltaTagsLastUpdateValues:
+			LOAD 
+				 MAX(maxUpdatedTS) 		as LastUpdate //,
+				 //MIN(maxLastCheckedTS) 	as LastCheck
+			Resident DeltaTags_TableSources;
+		
+		Let vDeltaTags_NewTagValue_LastUpdate = Timestamp(Peek('LastUpdate', 0, 'DeltaTagsLastUpdateValues'), 'YYYYMMDDhhmmss');
+		
+		Drop Table DeltaTagsLastUpdateValues;
+		
+		Drop Table DeltaTags_TableSources;
+		
+	ENDIF 
+	
+ENDSUB 
+
+SUB DeltaTags_RegisterQVD(vDeltaTags_RegisterQVD_Type, vDeltaTags_RegisterQVD_Path, vDeltaTags_RegisterQVD_FieldName, vDeltaTags_RegisterQVD_RootDirectory, vDeltaTags_RegisterQVD_Recursive)
+
+	If('$(vDeltaTags_RegisterQVD_Type)' <> 'Input' and '$(vDeltaTags_RegisterQVD_Type)' <> 'Output') THEN
+
+		Trace Throwing Error because DeltaTags_RegisterQVD function only accepts 'Input' or 'Output' as type and something else was provided;
+		Error - Halt;
+		EXIT SUB;
+
+	ENDIF 
+
+	If('$(vDeltaTags_RegisterQVD_Recursive)' <> 1 and '$(vDeltaTags_RegisterQVD_Recursive)' <> 0 and '$(vDeltaTags_RegisterQVD_Recursive)' <> '') THEN
+		Trace Throwing Error because DeltaTags_RegisterQVD function only accepts '1' or '0' on the "Recursive" argument and something else was provided;
+		Error - Halt;
+		EXIT SUB;
+	ENDIF 
+
+	If Len('$(vDeltaTags_RegisterQVD_Path)') = 0 or Len('$(vDeltaTags_RegisterQVD_FieldName)') = 0 THEN 
+
+		Trace Throwing Error because no QVD Path or QVD field name was provided to DeltaTags_RegisterQVD();
+		Error - Halt;
+		EXIT SUB;
+	ENDIF 
+
+	If Len(TableNumber('$(vDeltaTags_RegisterQVD_DefaultTableName)_$(vDeltaTags_RegisterQVD_Type)')) = 0 THEN
+		[$(vDeltaTags_RegisterQVD_DefaultTableName)_$(vDeltaTags_RegisterQVD_Type)]:
+		LOAD 
+				Null() as [$(vDeltaTags_RegisterQVD_Type)QVD_Path]
+		AutoGenerate 0;
+	ENDIF
+
+	IF ('$(vDeltaTags_RegisterQVD_Type)' = 'Output') THEN
+		//Create Separate FieldList table when QVD being registered is an Output
+		IF Len(TableNumber('$(vDeltaTags_RegisterQVD_DefaultFieldListTableName)')) = 0 Then 
+			[$(vDeltaTags_RegisterQVD_DefaultFieldListTableName)]:
+				NoConcatenate LOAD Null() as DeltaTagFieldName AutoGenerate 0;
+		ENDIF 
+
+		Concatenate([$(vDeltaTags_RegisterQVD_DefaultFieldListTableName)])
+			LOAD 
+				'$(vDeltaTags_RegisterQVD_FieldName)' as DeltaTagFieldName
+			AutoGenerate 1;
+			
+	ENDIF 
+	Concatenate([$(vDeltaTags_RegisterQVD_DefaultTableName)_$(vDeltaTags_RegisterQVD_Type)])
+		LOAD 
+			'$(vDeltaTags_RegisterQVD_Path)' as [$(vDeltaTags_RegisterQVD_Type)QVD_Path],
+			'$(vDeltaTags_RegisterQVD_FieldName)' as [$(vDeltaTags_RegisterQVD_Type)QVD_FieldName],
+			'$(vDeltaTags_RegisterQVD_RootDirectory)' as [$(vDeltaTags_RegisterQVD_Type)QVD_RootDirectory],
+			RangeMax(0, $(vDeltaTags_RegisterQVD_Recursive)) as [$(vDeltaTags_RegisterQVD_Type)QVD_Recursive]
+		AutoGenerate 1;
+
+ENDSUB 
+SUB DeltaTags_GetTimeValuesToUpdate(vDeltaTags_UpdateTimes_Type, vDeltaTags_UpdateTimes_FieldList, vDeltaTags_UpdateTimes_Start, vDeltaTags_UpdateTimes_End)
+	
+	IF Len('$(vDeltaTags_UpdateTimes_End)') = 0 THEN 
+		Let vDeltaTags_UpdateTimes_End = Timestamp(Now(1), 'YYYY-MM-DD hh:mm:ss');
+	ENDIF 
+	
+	If '$(vDeltaTags_UpdateTimes_End)' < '$(vDeltaTags_UpdateTimes_Start)' THEN 
+		Trace Throwing Error because Start Time is greater than End time in DeltaTags_GetUpdateTimes();
+		Error - Halt;
+		EXIT SUB;
+	ENDIF 
+	
+	If Len('$(vDeltaTags_UpdateTimes_Type)') = 0 or Len('$(vDeltaTags_UpdateTimes_FieldList)') = 0 or Len('$(vDeltaTags_UpdateTimes_Start)') = 0 THEN 
+
+		Trace Throwing Error because no Update Time Type was provided to DeltaTags_GetUpdateTimes();
+		Error - Halt;
+		EXIT SUB;
+
+	ELSE 
+
+		SWITCH '$(vDeltaTags_UpdateTimes_Type)' 
+			CASE 'Month'
+				Set vDeltaTags_UpdateTimes_Format = 'YYYYMM';
+				Let vDeltaTags_UpdateTimes_Increment = 1;
+			Case 'Year'
+				Set vDeltaTags_UpdateTimes_Format = 'YYYY';
+				Let vDeltaTags_UpdateTimes_Increment = 1;
+			Case 'Date'
+				Set vDeltaTags_UpdateTimes_Format = 'YYYYMMDD';
+				Let vDeltaTags_UpdateTimes_Increment = 1;
+			Case 'Hour'
+				Set vDeltaTags_UpdateTimes_Format = 'YYYYMMDDhh';
+				Let vDeltaTags_UpdateTimes_Increment = 1/24;
+			Case 'Minute'
+				Set vDeltaTags_UpdateTimes_Format = 'YYYYMMDDhhmm';
+				Let vDeltaTags_UpdateTimes_Increment = 1/24/60;
+			Default 
+				Set vDeltaTags_UpdateTimes_Format = '';
+		END SWITCH
+	
+		
+			
+		SWITCH '$(vDeltaTags_UpdateTimes_Type)' 
+			CASE 'Month'
+				Let vDeltaTags_NoOfTimeValues = ((Year('$(vDeltaTags_UpdateTimes_End)') - 1) * 12 + Num(Month('$(vDeltaTags_UpdateTimes_End)')))
+										- ((Year('$(vDeltaTags_UpdateTimes_Start)') - 1) * 12 + Num(Month('$(vDeltaTags_UpdateTimes_Start)')))
+										+ 1;
+			Case 'Year'
+				Let vDeltaTags_NoOfTimeValues = (Year('$(vDeltaTags_UpdateTimes_End)')) - (Year('$(vDeltaTags_UpdateTimes_Start)')) + 1;
+			Case 'Date'
+				Let vDeltaTags_NoOfTimeValues = Num(Floor('$(vDeltaTags_UpdateTimes_End)') - Floor('$(vDeltaTags_UpdateTimes_Start)')) + 1;
+			Case 'Hour'
+				Let vDeltaTags_NoOfTimeValues = Num#(Interval(Floor('$(vDeltaTags_UpdateTimes_End)', 1/24) - Floor('$(vDeltaTags_UpdateTimes_Start)', 1/24), 'hh'))+1;
+			Case 'Minute'
+				Let vDeltaTags_NoOfTimeValues =  Num#(Interval('$(vDeltaTags_UpdateTimes_End)' - '$(vDeltaTags_UpdateTimes_Start)', 'hh')) * 60
+												+ Num#(Interval(Floor('$(vDeltaTags_UpdateTimes_End)', 1/24/60) - Floor('$(vDeltaTags_UpdateTimes_Start)', 1/24/60), 'mm'))
+												+ 1;
+//			Default 
+//				Set vDeltaTags_UpdateTimes_Format = '';
+		END SWITCH
+		
+//		DeltaTags_TimeValuesToUpdateTemp:
+//			NoConcatenate 
+//			Load Distinct
+//				IterNo() + Num#(Timestamp('$(vDeltaTags_UpdateTimes_Start)', '$(vDeltaTags_UpdateTimes_Format)')) - 1 as DeltaTags_TimeValuesToUpdate
+//			AutoGenerate 1
+//				WHILE (IterNo() + Num#(Timestamp('$(vDeltaTags_UpdateTimes_Start)', '$(vDeltaTags_UpdateTimes_Format)')) - 1) <= Num#(Timestamp('$(vDeltaTags_UpdateTimes_End)', '$(vDeltaTags_UpdateTimes_Format)'));
+		
+		DeltaTags_TimeValuesToUpdateTemp:
+			NoConcatenate 
+			Load Distinct
+				 If(Match('$(vDeltaTags_UpdateTimes_Type)', 'Date', 'Hour', 'Minute'), 
+				 	Num#(Timestamp(Num('$(vDeltaTags_UpdateTimes_Start)') + ((RowNo()-1) * $(vDeltaTags_UpdateTimes_Increment)), '$(vDeltaTags_UpdateTimes_Format)')), 
+				 If(Match('$(vDeltaTags_UpdateTimes_Type)', 'Month'),
+				 	Num#(Timestamp(AddMonths(Num('$(vDeltaTags_UpdateTimes_Start)'), (RowNo()-1)), '$(vDeltaTags_UpdateTimes_Format)')),
+				 If(Match('$(vDeltaTags_UpdateTimes_Type)', 'Year'),
+				 	Num#(Timestamp(AddMonths(Num('$(vDeltaTags_UpdateTimes_Start)'), (RowNo()-1) * 12), '$(vDeltaTags_UpdateTimes_Format)')))))
+				 as DeltaTags_TimeValuesToUpdate
+			AutoGenerate $(vDeltaTags_NoOfTimeValues)
+				;
+
+		Let vDeltaTags_UpdateTimes_Fields = 'DeltaTags_TimeValuesToUpdate as [' & Replace('$(vDeltaTags_UpdateTimes_FieldList)', ',', '], DeltaTags_TimeValuesToUpdate as [') & ']';
+
+		DeltaTags_TimeValuesToUpdate:
+			NoConcatenate LOAD $(vDeltaTags_UpdateTimes_Fields) Resident DeltaTags_TimeValuesToUpdateTemp;
+		
+		DROP TABLE DeltaTags_TimeValuesToUpdateTemp;
+
+	ENDIF
+
+	Let vDeltaTags_UpdateTimes_Format = ;
+	Let vDeltaTags_UpdateTimes_Start = ;
+	Let vDeltaTags_UpdateTimes_End = ;
+	Let vDeltaTags_UpdateTimes_Type = ;
+	Let vDeltaTags_UpdateTimes_FieldList = ;
+	Let vDeltaTags_UpdateTimes_Fields = ;
+	Let vDeltaTags_UpdateTimes_Increment =;
+	Let vDeltaTags_NoOfTimeValues =;
+
+ENDSUB 

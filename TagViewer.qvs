@@ -1,0 +1,36 @@
+
+Set vRootDir = '.'; //Set this variable to the root directory where the QVDs you want to scan are stored. Example: C:\Documents\QlikView\MyQVDs
+
+Sub DoDir(vDir)
+
+	For each vQVD in FileList('$(vDir)\*.qvd')
+	
+		If FileTime('$(vQVD)') > 0 THEN
+			String:
+			LOAD String%Table,
+			    '$(vQVD)-'  & %Key_QvdFieldHeader_59D66ED49CFF179D  as Key   // Key to parent table: QvdTableHeader/Fields/QvdFieldHeader
+			FROM [$(vQVD)] (XmlSimple, Table is [QvdTableHeader/Fields/QvdFieldHeader/Tags/String]);
+			
+			QvdFieldHeader:
+			LOAD 
+				'$(vQVD)' as QVD,
+				FieldName,
+			    '$(vQVD)-'  & %Key_QvdFieldHeader_59D66ED49CFF179D  as Key   // Key for this table: QvdTableHeader/Fields/QvdFieldHeader
+			FROM [$(vQVD)] (XmlSimple, Table is [QvdTableHeader/Fields/QvdFieldHeader]);
+			
+		ENDIF
+		
+	Next vQVD
+	
+	Let vQVD = ;
+	
+	For each vSubDir in DirList('$(vDir)\*')
+		CALL DoDir('$(vSubDir)');
+	Next vSubDir
+	
+	Let vSubDir = ;
+	
+ENDSUB 
+CALL DoDir('$(vRootDir)');
+
+Let vRootDir =;
