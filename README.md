@@ -33,6 +33,7 @@ For this reason, the Delta Tags script is compatible starting with the following
 * QlikView November 2017, SR5
 * Qlik Sense April 2018
 
+```
 /*******************                 Delta Tags                 ********************
 
 The MIT License (MIT)
@@ -42,6 +43,7 @@ Copyright (c) 2018-2019 Miguel Ángel García - All Rights Reserved
 This script is part of the Lean Data Processing Framework code bundle.
 
 ************************         www.aftersync.com         *************************
+
 ********************         www.leandataprocessing.com         ********************
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
@@ -62,3 +64,4 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ********************			********************			*******************/
+```
