@@ -21,8 +21,12 @@ Here is a quick overview of how the process works:
 2. The second step is to process the data based on the calculated timeframe. This is done similar to any other method and it doesn’t need to be modified.
 3. Finally, at the end of the load script, before storing the QVD, field tags are set based on the new successful execution, so that they can be used the next time it runs.
 
-# Example:
+# View it in Action:
+Check out the video [here](https://youtube.com/watch/UEkFT4ZWFmc)
 
+[![View it in action](http://img.youtube.com/vi/UEkFT4ZWFmc/maxresdefault.jpg)](https://youtube.com/watch/UEkFT4ZWFmc)
+
+# Another Example:
 Visit [this blog post](https://aftersync.com/blog/delta-tags-a-new-mechanism-for-efficiently-keeping-track-of-incremental-reloads-in-qlikview-and-qlik-sense) for a more in-depth example of implementing DeltaTags.
 
 # Compatibility Note
